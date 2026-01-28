@@ -42,6 +42,11 @@ def init_db():
             analyzed_at DATETIME,
             is_bookmarked BOOLEAN DEFAULT FALSE,
             tags TEXT,
+            expert_review_status TEXT DEFAULT 'none',
+            market_relevance_score REAL,
+            uncertainty_score REAL,
+            expert_explainability_score REAL,
+            topic_vector TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -131,6 +136,27 @@ def migrate_db():
         cursor.execute("ALTER TABLE news ADD COLUMN tags TEXT")
         print("Added tags column to news table")
 
+    # Phase 5: Daily selection algorithm columns
+    if 'expert_review_status' not in columns:
+        cursor.execute("ALTER TABLE news ADD COLUMN expert_review_status TEXT DEFAULT 'none'")
+        print("Added expert_review_status column to news table")
+
+    if 'market_relevance_score' not in columns:
+        cursor.execute("ALTER TABLE news ADD COLUMN market_relevance_score REAL")
+        print("Added market_relevance_score column to news table")
+
+    if 'uncertainty_score' not in columns:
+        cursor.execute("ALTER TABLE news ADD COLUMN uncertainty_score REAL")
+        print("Added uncertainty_score column to news table")
+
+    if 'expert_explainability_score' not in columns:
+        cursor.execute("ALTER TABLE news ADD COLUMN expert_explainability_score REAL")
+        print("Added expert_explainability_score column to news table")
+
+    if 'topic_vector' not in columns:
+        cursor.execute("ALTER TABLE news ADD COLUMN topic_vector TEXT")
+        print("Added topic_vector column to news table")
+
     # Create notifications tables if not exist
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notifications (
@@ -167,6 +193,7 @@ def migrate_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_bookmarked ON news(is_bookmarked)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_expert_review_status ON news(expert_review_status)")
 
     conn.commit()
     conn.close()

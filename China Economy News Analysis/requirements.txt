@@ -24,3 +24,7 @@ pandas>=2.1.0
 openpyxl>=3.1.0
 xlsxwriter>=3.1.0
 fpdf2>=2.7.0
+
+# Embeddings & Similarity (Phase 5)
+numpy>=1.24.0
+sentence-transformers>=2.2.0  # Optional: for better embeddings

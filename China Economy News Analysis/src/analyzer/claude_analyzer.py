@@ -51,6 +51,9 @@ class ClaudeAnalyzer:
     "translated_title": "한국어 번역 제목",
     "summary": "150-300자 한국어 요약 (3-5문장)",
     "importance_score": 0.0-1.0 사이 점수 (정책 영향력, 산업 파급력, 시장 영향 기준),
+    "market_relevance_score": 0.0-1.0 사이 점수 (금융시장 직접 관련성),
+    "uncertainty_score": 0.0-1.0 사이 점수 (정보의 불확실성/모호성 정도, 높을수록 불확실),
+    "expert_explainability_score": 0.0-1.0 사이 점수 (전문가 해설 필요성, 높을수록 해설 필요),
     "industry_category": "semiconductor/ai/new_energy/bio/aerospace/quantum/materials/other 중 하나",
     "content_type": "policy/corporate/industry/market/opinion 중 하나",
     "sentiment": "positive/negative/neutral 중 하나",
@@ -58,7 +61,13 @@ class ClaudeAnalyzer:
     "market_impact": "시장 영향 예측 (1-2문장)"
 }}
 
-전문 용어는 정확하게 번역하고, 중요도 평가는 기관투자자/기업전략팀 관점에서 판단해주세요."""
+점수 기준:
+- importance_score: 기관투자자/기업전략팀 관점에서의 중요도
+- market_relevance_score: 주식/채권/외환 시장에 직접적 영향 여부
+- uncertainty_score: 정책 방향, 수치, 시행 시기 등의 불확실성
+- expert_explainability_score: 배경지식 없이 이해하기 어려운 정도
+
+전문 용어는 정확하게 번역해주세요."""
 
         try:
             response = self.client.messages.create(
@@ -84,6 +93,9 @@ class ClaudeAnalyzer:
                     translated_title = ?,
                     summary = ?,
                     importance_score = ?,
+                    market_relevance_score = ?,
+                    uncertainty_score = ?,
+                    expert_explainability_score = ?,
                     industry_category = ?,
                     content_type = ?,
                     sentiment = ?,
@@ -96,6 +108,9 @@ class ClaudeAnalyzer:
                 result.get("translated_title"),
                 result.get("summary"),
                 result.get("importance_score", 0.5),
+                result.get("market_relevance_score", 0.5),
+                result.get("uncertainty_score", 0.5),
+                result.get("expert_explainability_score", 0.5),
                 result.get("industry_category"),
                 result.get("content_type"),
                 result.get("sentiment"),
@@ -106,6 +121,13 @@ class ClaudeAnalyzer:
                 news_id,
             ))
             conn.commit()
+
+            # Generate topic vector after analysis
+            try:
+                from src.analyzer.embeddings import generate_topic_vector
+                generate_topic_vector(news_id)
+            except Exception as e:
+                logger.warning(f"Failed to generate topic vector for news {news_id}: {e}")
 
             logger.info(f"Analyzed news {news_id}: {result.get('translated_title', '')[:30]}...")
             return result
