@@ -568,6 +568,25 @@ def render_stat_cards(stats):
         """, unsafe_allow_html=True)
 
 
+def login_page():
+    """관리자 로그인 페이지."""
+    st.title("🔐 관리자 로그인")
+    st.markdown("---")
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        user = st.text_input("ID")
+        pw = st.text_input("PW", type="password")
+
+        if st.button("로그인", use_container_width=True):
+            if user == "skhan96" and pw == "kshan0816!!":
+                st.session_state["login"] = True
+                st.rerun()
+            else:
+                st.error("ID 또는 PW가 틀렸습니다")
+
+
 def main():
     """Main Streamlit app."""
     st.set_page_config(
@@ -576,6 +595,11 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+    # 로그인 체크
+    if "login" not in st.session_state or not st.session_state["login"]:
+        login_page()
+        st.stop()
 
     # Apply custom CSS
     apply_custom_css()
