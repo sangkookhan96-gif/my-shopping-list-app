@@ -24,8 +24,6 @@ from src.database.models import init_db, migrate_db, get_connection
 from src.collector.crawler import NewsCrawler
 from src.utils.backup import create_backup, cleanup_old_backups
 from src.utils.notifications import NotificationManager
-from src.agents.daily_news_selector import run_daily_selection
-from src.analyzer.embeddings import backfill_topic_vectors
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,10 +45,8 @@ class SchedulerAgent:
             "total_collected": 0,
             "total_analyzed": 0,
             "total_notifications": 0,
-            "total_selected_for_review": 0,
             "last_crawl": None,
             "last_analysis": None,
-            "last_daily_selection": None,
             "errors": 0,
         }
 
@@ -168,35 +164,6 @@ class SchedulerAgent:
             logger.error(f"Backup failed: {e}")
             self.stats["errors"] += 1
 
-    def run_daily_news_selection(self):
-        """Select 10 news items for expert review (runs at 06:00)."""
-        logger.info("=" * 50)
-        logger.info("Running daily news selection for expert review...")
-
-        try:
-            # First, backfill any missing topic vectors
-            logger.info("Backfilling topic vectors...")
-            backfill_result = backfill_topic_vectors(limit=50)
-            logger.info(f"Topic vectors: {backfill_result['success']} generated")
-
-            # Run the selection algorithm
-            result = run_daily_selection()
-
-            self.stats["total_selected_for_review"] += result["selected_count"]
-            self.stats["last_daily_selection"] = datetime.now()
-
-            logger.info(f"Daily selection complete:")
-            logger.info(f"  - Reset from previous queue: {result['reset_count']}")
-            logger.info(f"  - Selected for review: {result['selected_count']}")
-            logger.info(f"  - News IDs: {result['selected_ids']}")
-
-            return result
-
-        except Exception as e:
-            logger.error(f"Daily selection failed: {e}")
-            self.stats["errors"] += 1
-            return {"selected_count": 0, "selected_ids": []}
-
     def run_daily_summary(self):
         """Generate daily summary (runs at midnight)."""
         logger.info("=" * 50)
@@ -245,12 +212,9 @@ class SchedulerAgent:
         logger.info(f"  - Total collected: {self.stats['total_collected']}")
         logger.info(f"  - Total analyzed: {self.stats['total_analyzed']}")
         logger.info(f"  - Notifications sent: {self.stats['total_notifications']}")
-        logger.info(f"  - Selected for review: {self.stats['total_selected_for_review']}")
         logger.info(f"  - Errors: {self.stats['errors']}")
         if self.stats['last_crawl']:
             logger.info(f"  - Last crawl: {self.stats['last_crawl'].strftime('%H:%M:%S')}")
-        if self.stats['last_daily_selection']:
-            logger.info(f"  - Last daily selection: {self.stats['last_daily_selection'].strftime('%H:%M:%S')}")
 
     def setup_schedule(self):
         """Configure the schedule for all tasks."""
@@ -265,35 +229,11 @@ class SchedulerAgent:
         # Daily summary at midnight
         schedule.every().day.at("00:00").do(self.run_daily_summary)
 
-        # Daily news selection for expert review at 06:00
-        schedule.every().day.at("06:00").do(self.run_daily_news_selection)
-
         logger.info(f"Schedule configured:")
         logger.info(f"  - News collection: every {interval} hour(s)")
         logger.info(f"  - Daily backup: at 23:00")
         logger.info(f"  - Daily summary: at 00:00")
-        logger.info(f"  - Daily news selection: at 06:00")
-
-    def check_missed_daily_tasks(self):
-        """Check if daily tasks were missed (e.g., after reboot) and run them."""
-        now = datetime.now()
-
-        # Check if daily news selection (06:00) was missed today
-        if now.hour >= 6 and self.stats["last_daily_selection"] is None:
-            # Check DB for today's queued items
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) as cnt FROM news
-                WHERE expert_review_status = 'queued_today'
-            """)
-            queued = cursor.fetchone()["cnt"]
-            conn.close()
-
-            if queued == 0:
-                logger.info("Missed daily news selection detected (06:00 task). Running now...")
-                self.run_hourly_task()  # Collect and analyze first
-                self.run_daily_news_selection()
+        logger.info(f"  - Daily news selection: managed by cron/anacron (not this scheduler)")
 
     def run(self, run_immediately: bool = True):
         """Start the scheduler agent."""
@@ -312,9 +252,6 @@ class SchedulerAgent:
         if run_immediately:
             logger.info("Running initial collection...")
             self.run_hourly_task()
-
-        # Check for missed daily tasks (e.g., after reboot past 06:00)
-        self.check_missed_daily_tasks()
 
         # Main loop
         logger.info("Entering scheduler loop (Ctrl+C to stop)...")
@@ -356,19 +293,12 @@ def main():
                         help="Don't run collection immediately at startup")
     parser.add_argument("--once", action="store_true",
                         help="Run once and exit (don't enter scheduler loop)")
-    parser.add_argument("--daily-selection", action="store_true",
-                        help="Run daily news selection and exit")
     args = parser.parse_args()
 
     # Create and run agent
     agent = SchedulerAgent()
 
-    if args.daily_selection:
-        logger.info("Running daily news selection...")
-        init_db()
-        migrate_db()
-        agent.run_daily_news_selection()
-    elif args.once:
+    if args.once:
         logger.info("Running single collection cycle...")
         init_db()
         migrate_db()
