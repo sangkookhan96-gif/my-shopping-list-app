@@ -385,7 +385,8 @@ class NewsCrawler:
                     break
 
         # Also try the policy documents list page
-        policy_url = "https://gxj.sz.gov.cn/xxgk/xxgkml/zcfgjzcjd/gfxwjcx/index.html"
+        # Note: HTTPS is broken on this server (BAD_ECPOINT SSL error), use HTTP
+        policy_url = "http://gxj.sz.gov.cn/xxgk/xxgkml/zcfgjzcjd/gfxwjcx/index.html"
         html = self.fetch_url(policy_url)
         if html:
             soup = BeautifulSoup(html, "lxml")
