@@ -20,7 +20,8 @@ from config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 
 def get_top_news(limit: int = 10, industry: str = None, days: int = 7,
-                 bookmarked_only: bool = False, tag_filter: str = None) -> pd.DataFrame:
+                 bookmarked_only: bool = False, tag_filter: str = None,
+                 queued_only: bool = False) -> pd.DataFrame:
     """Get top news sorted by importance score."""
     conn = get_connection()
 
@@ -33,9 +34,14 @@ def get_top_news(limit: int = 10, industry: str = None, days: int = 7,
         FROM news n
         LEFT JOIN expert_reviews er ON n.id = er.news_id
         WHERE n.analyzed_at IS NOT NULL
-          AND n.collected_at >= datetime('now', ?)
     """
-    params = [f'-{days} days']
+    params = []
+
+    if queued_only:
+        query += " AND n.expert_review_status = 'queued_today'"
+    else:
+        query += " AND n.collected_at >= datetime('now', ?)"
+        params.append(f'-{days} days')
 
     if industry and industry != "전체":
         query += " AND n.industry_category = ?"
@@ -677,18 +683,19 @@ def main():
     ])
 
     with tab1:
-        st.subheader(f"중요도 상위 {news_limit}개 뉴스")
+        st.subheader("📋 오늘의 선정 뉴스")
 
         df = get_top_news(
             limit=news_limit,
             industry=selected_industry,
             days=days_range,
             bookmarked_only=bookmarked_only,
-            tag_filter=selected_tag
+            tag_filter=selected_tag,
+            queued_only=True
         )
 
         if df.empty:
-            st.info("분석된 뉴스가 없습니다. 먼저 뉴스 수집 및 분석을 실행해주세요.")
+            st.info("선정된 뉴스가 없습니다. 일일 뉴스 선정을 먼저 실행해주세요.")
         else:
             for idx, row in df.iterrows():
                 news_id = row['id']

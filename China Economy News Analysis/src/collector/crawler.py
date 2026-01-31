@@ -63,36 +63,6 @@ class NewsCrawler:
 
         return items
 
-    def crawl_xinhua(self) -> list[dict]:
-        """Crawl Xinhua News (신화통신)."""
-        items = []
-        url = "http://www.xinhuanet.com/fortune/"
-        html = self.fetch_url(url)
-        if not html:
-            return items
-
-        soup = BeautifulSoup(html, "lxml")
-        # Find news links in the main content area
-        for link in soup.select("a[href*='/fortune/']")[:MAX_NEWS_PER_SOURCE]:
-            href = link.get("href", "")
-            title = link.get_text(strip=True)
-
-            if not href or not title or len(title) < 10:
-                continue
-            if not href.startswith("http"):
-                href = urljoin(url, href)
-            # Filter for article URLs (usually contain date pattern)
-            if re.search(r"/\d{4}-\d{2}/\d{2}/", href):
-                items.append({
-                    "source": "xinhua",
-                    "original_url": href,
-                    "original_title": title,
-                    "original_content": "",
-                    "published_at": None,
-                })
-
-        return items
-
     def crawl_people(self) -> list[dict]:
         """Crawl People's Daily Finance (인민일보 재경)."""
         items = []

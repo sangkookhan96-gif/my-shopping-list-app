@@ -233,7 +233,7 @@ class SchedulerAgent:
         logger.info(f"  - News collection: every {interval} hour(s)")
         logger.info(f"  - Daily backup: at 23:00")
         logger.info(f"  - Daily summary: at 00:00")
-        logger.info(f"  - Daily news selection: managed by cron/anacron (not this scheduler)")
+        logger.info(f"  - Daily news selection: managed by cron (not this scheduler)")
 
     def run(self, run_immediately: bool = True):
         """Start the scheduler agent."""

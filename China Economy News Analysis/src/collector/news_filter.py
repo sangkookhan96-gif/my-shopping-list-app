@@ -40,7 +40,7 @@ SOURCE_MAX_COUNT = {
 
 # 중앙 미디어/기관 출처 (중앙정부 포함 — 중앙 보너스 +5 대상)
 CENTRAL_SOURCES = [
-    'xinhua', 'people', 'ce', 'caixin', '36kr', 'stcn', 'huxiu',
+    'people', 'ce', 'caixin', '36kr', 'stcn', 'huxiu',
     'cls', 'jiemian', 'yicai', 'sina_finance',
     '21jingji', 'xinhua_finance',
     # Week 5 중앙정부
@@ -57,12 +57,11 @@ CATEGORIES = {
     '에너지': ['能源', '电力', '电池', '新能源', '太阳能', '光伏', '氢能', '核能', '核聚变', '钍能', '风能', '风电', '地热'],
     '금융': ['银行', '金融', '融资', '股票', '债券', '证券', '上市'],
     '기업': ['企业', '公司', '股', '高管', '并购', '股东', '项目'],
-    '기술': ['技术', '科技', 'AI', '机器人', '无人机', '智能制造', '生物', '自动驾驶', '超算', '量子', '航天', '新材料', '6G', '5G', '3D打印']
+    '과학기술': ['技术', '科技', 'AI', '机器人', '无人机', '智能制造', '生物', '自动驾驶', '超算', '量子', '航天', '新材料', '6G', '5G', '3D打印']
 }
 
 # 출처별 기본 우선순위 (중앙 미디어 > 지방정부)
 SOURCE_PRIORITY = {
-    'xinhua': 12,
     'people': 11,
     'caixin': 10,
     'ce': 10,
@@ -71,7 +70,7 @@ SOURCE_PRIORITY = {
     'huxiu': 8,
     'beijing_gov': 4,
     'shanghai_gov': 4,
-    'shenzhen_gov': 4,
+    'shenzhen_gov': 3,
     'cls': 9,
     'jiemian': 8,
     'yicai': 10,
@@ -266,7 +265,7 @@ def filter_news(news_list: list) -> list:
         central_bonus = 5 if source in CENTRAL_SOURCES else 0
 
         # 국내 뉴스 보너스
-        domestic_bonus = 3 if news['is_domestic'] else 0
+        domestic_bonus = 6 if news['is_domestic'] else 0
 
         # 형식적 기준 점수 (기존)
         formal_score = source_score + central_bonus + domestic_bonus + fact_score
@@ -313,7 +312,7 @@ def balance_categories(news_list: list, target_count: int = 10, max_local_gov: i
         )
 
     selected = []
-    main_categories = ['정책', '거시경제', '산업', '에너지', '금융', '기업', '기술']
+    main_categories = ['과학기술', '산업', '에너지', '기업', '금융', '정책', '거시경제']
 
     # 1단계: 각 카테고리에서 1개씩 (출처 중복 최소화, 지방정부 제한)
     for category in main_categories:

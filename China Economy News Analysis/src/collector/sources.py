@@ -3,16 +3,6 @@
 # Week 1: Core 4 sources (국가/경제/금융 매체)
 NEWS_SOURCES = {
     # Week 1 - Core sources
-    "xinhua": {
-        "name": "新华社 (신화통신)",
-        "name_ko": "신화통신",
-        "url": "http://www.xinhuanet.com/fortune/",
-        "rss": "http://www.xinhuanet.com/fortune/news_list.rss",
-        "type": "national",
-        "priority": 1,
-        "week": 1,
-        "enabled": False,
-    },
     "people": {
         "name": "人民日报 (인민일보)",
         "name_ko": "인민일보",

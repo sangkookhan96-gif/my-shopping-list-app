@@ -22,27 +22,36 @@ logger = logging.getLogger(__name__)
 def get_eligible_candidates(conn) -> list:
     """Fetch all eligible news candidates for selection.
 
-    Uses the same base query structure as run_collector.py but with
-    additional constraints for daily selection (analyzed, not yet reviewed).
+    Strict 24-hour freshness filter: only news published (or collected,
+    if published_at is unavailable) within the last 24 hours are eligible.
+    News older than 24 hours is unconditionally excluded.
     """
     cursor = conn.cursor()
 
-    # 48-hour lookback window for daily selection
-    cutoff_time = datetime.now() - timedelta(hours=48)
+    # Strict 24-hour cutoff — no exceptions
+    cutoff_time = datetime.now() - timedelta(hours=24)
+    cutoff_str = cutoff_time.strftime("%Y-%m-%d %H:%M:%S")
 
     cursor.execute("""
-        SELECT id, original_title, original_content, published_at, source
+        SELECT id, original_title, original_content, published_at, source, collected_at,
+               importance_score, translated_title
         FROM news
         WHERE
             analyzed_at IS NOT NULL
             AND (expert_review_status = 'none' OR expert_review_status IS NULL)
             AND expert_review_status != 'skipped'
-            AND published_at >= ?
-        ORDER BY published_at DESC
-    """, (cutoff_time.strftime("%Y-%m-%d %H:%M:%S"),))
+            AND COALESCE(published_at, collected_at) >= ?
+            AND importance_score <= 1.0
+            AND COALESCE(translated_title, '') != ''
+        ORDER BY COALESCE(published_at, collected_at) DESC
+    """, (cutoff_str,))
 
     candidates = []
     for row in cursor.fetchall():
+        # Double-check: enforce 24h cutoff in Python as well
+        effective_time = row['published_at'] or row['collected_at']
+        if effective_time and effective_time < cutoff_str:
+            continue
         candidates.append({
             'id': row['id'],
             'original_title': row['original_title'] or '',
