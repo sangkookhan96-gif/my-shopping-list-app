@@ -284,9 +284,11 @@ def filter_news(news_list: list) -> list:
         news['content_explanation'] = content_result['explanation']
 
         # 종합 우선순위 점수: 형식적 기준(40%) + 내용적 기준(60%)
-        # content_score는 0~100 범위이므로 formal_score 스케일(~30)에 맞춰 정규화
-        content_normalized = content_result['total_score'] * 0.3  # 0~30 범위로
-        news['priority_score'] = formal_score * 0.4 + content_normalized * 0.6
+        # formal을 0~100으로 정규화 (경험적 최대값 40 기준), content는 이미 0~100
+        FORMAL_MAX = 40
+        formal_normalized = min(formal_score / FORMAL_MAX, 1.0) * 100
+        news['formal_normalized'] = formal_normalized
+        news['priority_score'] = formal_normalized * 0.40 + content_result['total_score'] * 0.60
 
         filtered.append(news)
 

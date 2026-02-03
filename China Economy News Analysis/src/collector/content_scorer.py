@@ -99,11 +99,12 @@ class ContentScorer:
             for key in SCORING_WEIGHTS
         )
 
-        # 부스터 적용
+        # 부스터 적용 (combined multiplier capped at 1.3)
         boosters = self._apply_boosters(text, breakdown)
         multiplier = 1.0
         for b in boosters:
             multiplier *= b["multiplier"]
+        multiplier = min(multiplier, 1.3)
 
         total_score = min(weighted_score * multiplier, 100.0)
 
