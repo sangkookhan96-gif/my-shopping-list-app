@@ -2,8 +2,10 @@
 
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +19,68 @@ from src.utils.notifications import (
 )
 from src.utils.markdown_review import MarkdownReviewManager
 from config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
+
+# 8가지 기준 한글 라벨 매핑
+SCORE_AXIS_LABELS = {
+    "policy_hierarchy": "정책위계",
+    "corporate_hierarchy": "기업위계",
+    "strategic_industry": "전략산업",
+    "economic_scale": "경제규모",
+    "geographic_significance": "지리",
+    "time_sensitivity": "시간민감도",
+    "international_impact": "국제영향",
+    "social_impact": "사회영향",
+}
+
+# 부스터 한글 라벨
+BOOSTER_LABELS = {
+    "top_leader": "🔴 최고지도자 언급",
+    "state_council": "🟠 국무원 발표",
+    "soe_strategic": "🟡 중앙기업+전략산업",
+}
+
+
+def create_score_radar_chart(breakdown: dict) -> go.Figure:
+    """score_breakdown JSON으로 8축 레이더 차트 생성."""
+    keys = list(SCORE_AXIS_LABELS.keys())
+    labels = [SCORE_AXIS_LABELS[k] for k in keys]
+    values = [breakdown.get(k, 0) for k in keys]
+
+    # 차트를 닫기 위해 첫 번째 값 반복
+    labels_closed = labels + [labels[0]]
+    values_closed = values + [values[0]]
+
+    # 점수에 따른 fill 색상 결정 (최대 점수 기준)
+    max_score = max(values) if values else 0
+    if max_score >= 80:
+        line_color = "rgba(220, 53, 69, 0.9)"   # 빨강
+        fill_color = "rgba(220, 53, 69, 0.25)"
+    elif max_score >= 60:
+        line_color = "rgba(255, 152, 0, 0.9)"    # 주황
+        fill_color = "rgba(255, 152, 0, 0.25)"
+    else:
+        line_color = "rgba(158, 158, 158, 0.9)"  # 회색
+        fill_color = "rgba(158, 158, 158, 0.25)"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=values_closed,
+        theta=labels_closed,
+        fill='toself',
+        fillcolor=fill_color,
+        line=dict(color=line_color, width=2),
+        marker=dict(size=5),
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 100], tickvals=[20, 40, 60, 80, 100]),
+        ),
+        showlegend=False,
+        margin=dict(l=40, r=40, t=20, b=20),
+        height=280,
+    )
+    return fig
 
 
 def get_top_news(limit: int = 10, industry: str = None, days: int = 7,
@@ -890,6 +954,50 @@ def main():
 
                             if row.get('original_url'):
                                 st.markdown(f"[원문 링크]({row['original_url']})")
+
+                        # Score breakdown radar chart
+                        if row.get('score_breakdown'):
+                            try:
+                                breakdown_data = json.loads(row['score_breakdown']) if isinstance(row['score_breakdown'], str) else row['score_breakdown']
+                                if isinstance(breakdown_data, dict):
+                                    scores = breakdown_data.get('breakdown', breakdown_data)
+
+                                    # Parse boosters from score_explanation text
+                                    boosters_parsed = []
+                                    explanation = row.get('score_explanation', '') or ''
+                                    booster_match = re.search(r'\[부스터:\s*(.+?)\]', explanation)
+                                    if booster_match:
+                                        for bm in re.finditer(r'(\w+)\(x([\d.]+)\)', booster_match.group(1)):
+                                            boosters_parsed.append({"name": bm.group(1), "multiplier": float(bm.group(2))})
+
+                                    st.markdown("---")
+                                    col_radar, col_scores = st.columns([0.5, 0.5])
+
+                                    with col_radar:
+                                        st.markdown("**📊 8기준 점수 분석**")
+                                        fig = create_score_radar_chart(scores)
+                                        st.plotly_chart(fig, use_container_width=True, key=f"radar_{news_id}")
+
+                                    with col_scores:
+                                        st.markdown("**점수 상세**")
+                                        for key, label in SCORE_AXIS_LABELS.items():
+                                            score_val = scores.get(key, 0)
+                                            if score_val >= 80:
+                                                color = "🔴"
+                                            elif score_val >= 60:
+                                                color = "🟠"
+                                            else:
+                                                color = "⚪"
+                                            st.write(f"{color} {label}: **{score_val}**")
+
+                                        # Booster badges
+                                        if boosters_parsed:
+                                            st.markdown("**부스터 적용**")
+                                            for b in boosters_parsed:
+                                                badge_label = BOOSTER_LABELS.get(b['name'], f"🏷️ {b['name']}")
+                                                st.markdown(f"{badge_label} (x{b['multiplier']})")
+                            except (json.JSONDecodeError, TypeError):
+                                pass
 
                         # Tags section
                         st.markdown("---")
