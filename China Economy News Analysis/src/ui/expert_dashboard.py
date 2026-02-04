@@ -19,6 +19,7 @@ from src.utils.notifications import (
 )
 from src.utils.markdown_review import MarkdownReviewManager
 from config.settings import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from src.collector.news_filter import SOURCE_PRIORITY
 
 # 8가지 기준 한글 라벨 매핑
 SCORE_AXIS_LABELS = {
@@ -860,10 +861,10 @@ def main():
     unread_count = stats['unread_notifications']
     notification_label = f"🔔 알림 ({unread_count})" if unread_count > 0 else "🔔 알림"
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "🔥 AI 추천 뉴스", "⭐ 북마크", "📂 Markdown 리뷰",
         "📝 리뷰 완료", notification_label, "📥 리포트 내보내기",
-        "📊 카테고리 분석"
+        "📊 카테고리 분석", "📡 소스 분석"
     ])
 
     with tab1:
@@ -1629,6 +1630,116 @@ def main():
                     else:
                         fc = "⚪"
                     st.write(f"{fc} **{ftitle}** ({fscore:.2f}) — {frow['source']}")
+
+    with tab8:
+        st.subheader("📡 소스별 뉴스 분포")
+
+        # Source label map
+        source_labels = {
+            'people': '인민일보', 'caixin': '차이신', 'ce': '경제일보',
+            '36kr': '36Kr', 'huxiu': '후시우', 'cls': '재련사',
+            'jiemian': '제면', 'yicai': '이차이징', 'sina_finance': '시나재경',
+            '21jingji': '21세기경제', 'xinhua_finance': '신화재경',
+            'beijing_gov': '베이징시', 'shanghai_gov': '상하이시',
+            'shenzhen_gov': '선전시', 'bbtnews': 'BBT뉴스',
+            'stdaily': '과기일보', 'cnstock': '중국증권보', 'sznews': '선전뉴스',
+            'gov_cn': '중앙정부', 'ndrc': '발개위', 'mof': '재정부',
+            'mofcom': '상무부', 'pboc': '인민은행',
+        }
+
+        # --- Bar chart: today's selected news by source ---
+        conn_src = get_connection()
+        src_df = pd.read_sql_query("""
+            SELECT source, COUNT(*) as count
+            FROM news
+            WHERE collected_at >= datetime('now', ? || ' days')
+            GROUP BY source
+            ORDER BY count DESC
+        """, conn_src, params=[f"-{days_range}"])
+
+        # --- 7-day trend data ---
+        trend_df = pd.read_sql_query("""
+            SELECT source,
+                   DATE(collected_at) as date,
+                   COUNT(*) as count
+            FROM news
+            WHERE collected_at >= datetime('now', '-7 days')
+            GROUP BY source, DATE(collected_at)
+            ORDER BY date
+        """, conn_src)
+        conn_src.close()
+
+        if src_df.empty:
+            st.info("해당 기간에 뉴스가 없습니다.")
+        else:
+            src_df['label'] = src_df['source'].map(
+                lambda s: source_labels.get(s, s)
+            )
+            src_df['priority'] = src_df['source'].map(
+                lambda s: SOURCE_PRIORITY.get(s, 5)
+            )
+
+            # Priority-based color scale
+            def priority_color(p):
+                if p >= 10:
+                    return "rgba(220, 53, 69, 0.85)"
+                elif p >= 8:
+                    return "rgba(255, 152, 0, 0.85)"
+                elif p >= 6:
+                    return "rgba(66, 133, 244, 0.85)"
+                else:
+                    return "rgba(158, 158, 158, 0.7)"
+
+            src_sorted = src_df.sort_values('count', ascending=True)
+            bar_colors = [priority_color(p) for p in src_sorted['priority']]
+
+            st.markdown("**매체별 뉴스 건수**")
+            fig_src = go.Figure(data=[go.Bar(
+                x=src_sorted['count'],
+                y=src_sorted['label'],
+                orientation='h',
+                marker_color=bar_colors,
+                text=src_sorted['count'],
+                textposition='outside',
+            )])
+            fig_src.update_layout(
+                xaxis_title="건수",
+                margin=dict(l=20, r=40, t=10, b=20),
+                height=max(300, len(src_df) * 28),
+            )
+            st.plotly_chart(fig_src, use_container_width=True, key="src_bar")
+
+            st.caption("색상: 🔴 우선순위 10+ | 🟠 8-9 | 🔵 6-7 | ⚪ 5 이하")
+
+        # --- 7-day trend line chart ---
+        if not trend_df.empty:
+            st.markdown("---")
+            st.markdown("**최근 7일 매체별 선정 빈도**")
+
+            # Top 8 sources by total count for readability
+            top_sources = trend_df.groupby('source')['count'].sum().nlargest(8).index.tolist()
+            trend_top = trend_df[trend_df['source'].isin(top_sources)]
+
+            fig_trend = go.Figure()
+            for src in top_sources:
+                sdata = trend_top[trend_top['source'] == src].sort_values('date')
+                label = source_labels.get(src, src)
+                fig_trend.add_trace(go.Scatter(
+                    x=sdata['date'],
+                    y=sdata['count'],
+                    mode='lines+markers',
+                    name=label,
+                    line=dict(width=2),
+                    marker=dict(size=5),
+                ))
+            fig_trend.update_layout(
+                xaxis_title="날짜",
+                yaxis_title="건수",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=20, r=20, t=40, b=20),
+                height=350,
+            )
+            st.plotly_chart(fig_trend, use_container_width=True, key="src_trend")
 
 
 if __name__ == "__main__":
