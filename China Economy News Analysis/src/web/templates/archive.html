@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}아카이브 - {{ site_title }}{% endblock %}
+
+{% block content %}
+<section class="archive-section">
+    <h2 class="page-title">아카이브</h2>
+
+    <div class="archive-layout">
+        <aside class="date-list">
+            <h3>날짜 선택</h3>
+            <ul>
+                {% for date_str in available_dates %}
+                <li>
+                    <a href="{{ url_for('archive', date=date_str) }}"
+                       class="date-link{% if selected_date and selected_date.isoformat() == date_str %} active{% endif %}">
+                        {{ date_str }}
+                    </a>
+                </li>
+                {% else %}
+                <li class="empty">게시된 뉴스가 없습니다</li>
+                {% endfor %}
+            </ul>
+        </aside>
+
+        <div class="archive-content">
+            {% if selected_date %}
+            <h3>{{ selected_date.strftime('%Y년 %m월 %d일') }} 뉴스</h3>
+            {% for news in selected_news %}
+                {% include "partials/news_card.html" %}
+            {% else %}
+            <p class="empty-state">해당 날짜에 게시된 뉴스가 없습니다.</p>
+            {% endfor %}
+            {% else %}
+            <p class="empty-state">왼쪽에서 날짜를 선택하세요.</p>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}

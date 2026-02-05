@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="feed-section">
+    {% if grouped_news.today %}
+    <div class="date-group">
+        <h2 class="date-heading">오늘</h2>
+        {% for news in grouped_news.today %}
+            {% include "partials/news_card.html" %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if grouped_news.yesterday %}
+    <div class="date-group">
+        <h2 class="date-heading">어제</h2>
+        {% for news in grouped_news.yesterday %}
+            {% include "partials/news_card.html" %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if grouped_news.earlier %}
+    <div class="date-group">
+        <h2 class="date-heading">이전</h2>
+        {% for news in grouped_news.earlier %}
+            {% include "partials/news_card.html" %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not grouped_news.today and not grouped_news.yesterday and not grouped_news.earlier %}
+    <div class="empty-state">
+        <p>아직 게시된 뉴스가 없습니다.</p>
+    </div>
+    {% endif %}
+
+    {% if total_pages > 1 %}
+    <nav class="pagination">
+        {% if current_page > 1 %}
+        <a href="{{ url_for('index', page=current_page-1) }}" class="page-link prev">이전</a>
+        {% endif %}
+
+        <span class="page-info">{{ current_page }} / {{ total_pages }}</span>
+
+        {% if current_page < total_pages %}
+        <a href="{{ url_for('index', page=current_page+1) }}" class="page-link next">다음</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+</section>
+{% endblock %}

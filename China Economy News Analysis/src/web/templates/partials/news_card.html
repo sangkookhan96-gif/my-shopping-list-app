@@ -1,0 +1,38 @@
+<article class="news-card">
+    <!-- 1. 카테고리 배지 + 날짜 -->
+    <header class="card-header">
+        <div class="card-meta">
+            {% set importance = news.importance|format_importance %}
+            <span class="badge {{ importance.class }}">{{ importance.label }}</span>
+            <span class="badge category">{{ news.category|category_label }}</span>
+            <time class="news-date">{{ news.date|format_date }}</time>
+        </div>
+        <!-- 2. 제목 -->
+        <h3 class="card-title">
+            <a href="{{ url_for('news_detail', news_id=news.id) }}">{{ news.headline }}</a>
+        </h3>
+    </header>
+
+    <!-- 3. 전문가 해설 -->
+    <section class="card-review">
+        <p>{{ news.expert_review[:300] }}{% if news.expert_review|length > 300 %}...{% endif %}</p>
+    </section>
+
+    <!-- 4. 원문 (접힘) -->
+    <section class="card-original">
+        <button class="toggle-original-btn" data-target="original-{{ news.id }}">
+            원문 보기
+        </button>
+        <div id="original-{{ news.id }}" class="original-content collapsed">
+            <div class="original-inner">
+                {{ news.original_article|safe_html }}
+            </div>
+            <button class="collapse-btn">접기</button>
+        </div>
+    </section>
+
+    <footer class="card-footer">
+        <span class="news-source">{{ news.source }}</span>
+        <a href="{{ url_for('news_detail', news_id=news.id) }}" class="read-more">자세히 보기 →</a>
+    </footer>
+</article>

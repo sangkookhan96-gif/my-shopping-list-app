@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ news.headline }} - {{ site_title }}{% endblock %}
+
+{% block content %}
+<article class="news-detail">
+    <header class="news-header">
+        <div class="news-meta">
+            {% set importance = news.importance|format_importance %}
+            <span class="badge {{ importance.class }}">{{ importance.label }}</span>
+            <span class="badge category">{{ news.category|category_label }}</span>
+            <time class="news-date">{{ news.date|format_date }}</time>
+        </div>
+        <h1 class="news-title">{{ news.headline }}</h1>
+        <p class="news-source">출처: {{ news.source }}</p>
+    </header>
+
+    <section class="expert-review-section">
+        <h2 class="section-title">전문가 해설</h2>
+        <div class="expert-review">
+            {{ news.expert_review|safe_html }}
+        </div>
+    </section>
+
+    {% if news.summary %}
+    <section class="summary-section">
+        <h2 class="section-title">요약</h2>
+        <p class="summary">{{ news.summary }}</p>
+    </section>
+    {% endif %}
+
+    <section class="original-section">
+        <button class="toggle-original-btn" data-target="original-content">
+            원문 보기
+        </button>
+        <div id="original-content" class="original-content collapsed">
+            <div class="original-inner">
+                {{ news.original_article|safe_html }}
+            </div>
+            <button class="collapse-btn">접기</button>
+        </div>
+    </section>
+
+    <footer class="news-footer">
+        <a href="{{ url_for('index') }}" class="back-link">← 목록으로</a>
+        {% if news.original_url %}
+        <a href="{{ news.original_url }}" target="_blank" rel="noopener" class="source-link">원본 링크 →</a>
+        {% endif %}
+    </footer>
+</article>
+{% endblock %}
