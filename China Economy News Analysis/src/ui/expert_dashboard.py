@@ -879,6 +879,12 @@ def main():
             queued_only=True
         )
 
+        # Display persistent save feedback from session state
+        if st.session_state.get("save_success_msg"):
+            st.success(st.session_state.pop("save_success_msg"))
+        if st.session_state.get("save_error_msg"):
+            st.error(st.session_state.pop("save_error_msg"))
+
         if df.empty:
             st.info("선정된 뉴스가 없습니다. 일일 뉴스 선정을 먼저 실행해주세요.")
         else:
@@ -946,16 +952,21 @@ def main():
                             )
                             if st.button("저장", key=f"qsave_{news_id}", type="primary"):
                                 full_comment = f"[{stance}] {quick_comment}" if quick_comment else f"[{stance}]"
-                                save_expert_comment(news_id, full_comment)
-                                # Auto Git commit via MarkdownReviewManager
-                                md_mgr = MarkdownReviewManager()
-                                md_mgr.save_review(
-                                    news_id=news_id,
-                                    content=full_comment,
-                                    news=dict(row),
-                                    auto_commit=True,
-                                )
-                                st.success("저장 완료!")
+                                try:
+                                    db_ok = save_expert_comment(news_id, full_comment)
+                                    if db_ok:
+                                        md_mgr = MarkdownReviewManager()
+                                        md_mgr.save_review(
+                                            news_id=news_id,
+                                            content=full_comment,
+                                            news=dict(row) if row is not None else None,
+                                            auto_commit=True,
+                                        )
+                                        st.session_state["save_success_msg"] = f"빠른 리뷰 저장 완료 (리뷰 완료 탭에서 확인)"
+                                    else:
+                                        st.session_state["save_error_msg"] = f"DB 저장 실패 (뉴스 {news_id})"
+                                except Exception as e:
+                                    st.session_state["save_error_msg"] = f"저장 중 오류: {e}"
                                 st.rerun()
 
                     # Expandable details
@@ -1087,27 +1098,40 @@ def main():
 
                         col_btn1, col_btn2, col_btn3 = st.columns([0.25, 0.25, 0.5])
 
+
                         with col_btn1:
                             if st.button("💾 저장 + Git", key=f"save_{news_id}"):
                                 if expert_comment_input.strip():
-                                    # Prepare news data for template
-                                    news_data = dict(row)
+                                    try:
+                                        # DB 저장을 먼저 실행 (핵심)
+                                        db_ok = save_expert_comment(news_id, expert_comment_input)
+                                        if not db_ok:
+                                            st.session_state["save_error_msg"] = f"DB 저장 실패 (뉴스 {news_id})"
+                                            st.rerun()
 
-                                    # Save to Markdown file with Git commit
-                                    result = md_review_manager.save_review(
-                                        news_id=news_id,
-                                        content=expert_comment_input,
-                                        news=news_data,
-                                        auto_commit=True
-                                    )
+                                        # Markdown 파일 + Git 커밋
+                                        news_data = dict(row) if row is not None else None
+                                        if news_data:
+                                            result = md_review_manager.save_review(
+                                                news_id=news_id,
+                                                content=expert_comment_input,
+                                                news=news_data,
+                                                auto_commit=True
+                                            )
+                                        else:
+                                            result = md_review_manager.save_expert_analysis(
+                                                analysis_text=expert_comment_input,
+                                                expert_name="중국 경제 전문가",
+                                                title="외부 전문가 분석",
+                                                auto_commit=True
+                                            )
 
-                                    # Also save to DB for compatibility
-                                    save_expert_comment(news_id, expert_comment_input)
+                                        news_title = (row.get('translated_title') or row.get('original_title') or '')[:30]
+                                        git_msg = " + Git 커밋" if result.get("committed") else ""
+                                        st.session_state["save_success_msg"] = f"저장 완료{git_msg}: {news_title}... (리뷰 완료 탭에서 확인)"
+                                    except Exception as e:
+                                        st.session_state["save_error_msg"] = f"저장 중 오류: {e}"
 
-                                    if result['committed']:
-                                        st.success(f"✅ Git 커밋 완료!")
-                                    else:
-                                        st.warning(result['message'])
                                     st.rerun()
                                 else:
                                     st.warning("논평을 입력해주세요.")
@@ -1115,15 +1139,32 @@ def main():
                         with col_btn2:
                             if st.button("📄 파일만 저장", key=f"save_file_{news_id}"):
                                 if expert_comment_input.strip():
-                                    news_data = dict(row)
-                                    result = md_review_manager.save_review(
-                                        news_id=news_id,
-                                        content=expert_comment_input,
-                                        news=news_data,
-                                        auto_commit=False
-                                    )
-                                    save_expert_comment(news_id, expert_comment_input)
-                                    st.success(f"📁 {result['file_path']}")
+                                    try:
+                                        db_ok = save_expert_comment(news_id, expert_comment_input)
+                                        if not db_ok:
+                                            st.session_state["save_error_msg"] = f"DB 저장 실패 (뉴스 {news_id})"
+                                            st.rerun()
+
+                                        news_data = dict(row) if row is not None else None
+                                        if news_data:
+                                            result = md_review_manager.save_review(
+                                                news_id=news_id,
+                                                content=expert_comment_input,
+                                                news=news_data,
+                                                auto_commit=False
+                                            )
+                                        else:
+                                            result = md_review_manager.save_expert_analysis(
+                                                analysis_text=expert_comment_input,
+                                                expert_name="중국 경제 전문가",
+                                                title="외부 전문가 분석",
+                                                auto_commit=False
+                                            )
+
+                                        st.session_state["save_success_msg"] = f"파일 저장 완료: {result.get('file_path', '')} (리뷰 완료 탭에서 확인)"
+                                    except Exception as e:
+                                        st.session_state["save_error_msg"] = f"저장 중 오류: {e}"
+
                                     st.rerun()
                                 else:
                                     st.warning("논평을 입력해주세요.")
@@ -1141,19 +1182,19 @@ def main():
                                         else:
                                             st.error(result)
 
-                        # Display AI final review if exists
-                        if row.get('ai_final_review'):
-                            st.markdown("---")
-                            st.markdown("**🤖 AI 최종 리뷰**")
+                            # Display AI final review if exists
+                            if row.get('ai_final_review'):
+                                st.markdown("---")
+                                st.markdown("**🤖 AI 최종 리뷰**")
+                                
+                                if row.get('opinion_conflict'):
+                                    st.warning("⚠️ AI와 전문가 의견에 차이가 있습니다.")
+                                else:
+                                    st.success("✅ AI와 전문가 의견이 대체로 일치합니다.")
+                                
+                                st.write(row['ai_final_review'])
 
-                            if row.get('opinion_conflict'):
-                                st.warning("⚠️ AI와 전문가 의견에 차이가 있습니다.")
-                            else:
-                                st.success("✅ AI와 전문가 의견이 대체로 일치합니다.")
-
-                            st.write(row['ai_final_review'])
-
-                    st.markdown("---")
+                st.markdown("---")
 
     with tab2:
         st.subheader("⭐ 북마크된 뉴스")

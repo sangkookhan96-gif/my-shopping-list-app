@@ -37,6 +37,8 @@ class MarkdownReviewManager:
                 cwd=repo_root,
                 capture_output=True,
                 check=True
+                
+                
             )
 
             # Git commit
@@ -118,8 +120,15 @@ class MarkdownReviewManager:
 
         # Auto commit
         if auto_commit:
-            title = news.get('translated_title', f'뉴스 {news_id}')[:50] if news else f'뉴스 {news_id}'
+            raw_title = None
+            if news and isinstance(news, dict):
+                raw_title = news.get('translated_title') or news.get('original_title')
+            if not raw_title:
+                raw_title = f'뉴스 {news_id}'
+            
+            title = str(raw_title)[:50]
             commit_msg = f"Add expert review: {title}"
+
 
             if self._git_commit(file_path, commit_msg):
                 result['committed'] = True
@@ -247,6 +256,65 @@ class MarkdownReviewManager:
 {remaining}"""
 
         return updated
+        
+    def save_expert_analysis(
+        self,
+        analysis_text: str,
+        expert_name: str,
+        category: str = "expert_analysis",
+        title: Optional[str] = None,
+        auto_commit: bool = True,
+        date: datetime = None
+    ) -> Dict:
+        """
+        뉴스 원문 없이 전문가 분석 글만 저장
+        """
+        if date is None:
+            date = datetime.now()
+
+        if not title:
+            title = f"{expert_name} 전문가 분석"
+
+        title = str(title)[:50]
+
+        # 파일 경로 (news_id 대신 expert_analysis 사용)
+        date_folder = self.base_path / date.strftime("%Y-%m-%d")
+        date_folder.mkdir(parents=True, exist_ok=True)
+        file_path = date_folder / f"expert_{date.strftime('%H%M%S')}.md"
+
+        content = f"""# {title}
+
+## 전문가
+{expert_name}
+
+## 분석 내용
+{analysis_text}
+
+---
+
+## 메타데이터
+- 카테고리: {category}
+- 작성일: {date.strftime('%Y-%m-%d %H:%M')}
+"""
+
+        file_path.write_text(content, encoding="utf-8")
+
+        result = {
+            "success": True,
+            "file_path": str(file_path),
+            "committed": False,
+            "message": "전문가 분석이 저장되었습니다."
+        }
+
+        if auto_commit:
+            commit_msg = f"Add expert analysis: {title}"
+            if self._git_commit(file_path, commit_msg):
+                result["committed"] = True
+                result["message"] = "전문가 분석이 저장되고 Git에 커밋되었습니다."
+
+        return result
+
+
 
 
 def get_review_manager() -> MarkdownReviewManager:
