@@ -95,7 +95,8 @@ def get_top_news(limit: int = 10, industry: str = None, days: int = 7,
                er.expert_comment,
                er.ai_final_review,
                er.opinion_conflict,
-               er.review_completed_at
+               er.review_completed_at,
+               er.publish_status
         FROM news n
         LEFT JOIN expert_reviews er ON n.id = er.news_id
         WHERE n.analyzed_at IS NOT NULL
@@ -169,21 +170,94 @@ def save_expert_comment(news_id: int, comment: str) -> bool:
                 UPDATE expert_reviews SET
                     expert_comment = ?,
                     review_completed_at = ?,
+                    publish_status = 'draft',
+                    publish_status_updated_at = ?,
                     updated_at = ?
                 WHERE news_id = ?
-            """, (comment, now, now, news_id))
+            """, (comment, now, now, now, news_id))
         else:
             cursor.execute("""
                 INSERT INTO expert_reviews
-                (news_id, expert_comment, review_started_at, review_completed_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (news_id, comment, now, now, now, now))
+                (news_id, expert_comment, review_started_at, review_completed_at,
+                 publish_status, publish_status_updated_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
+            """, (news_id, comment, now, now, now, now, now))
 
         conn.commit()
         return True
     except Exception as e:
         st.error(f"저장 실패: {e}")
         return False
+    finally:
+        conn.close()
+
+
+def get_reviews_by_status(status: str = 'draft', limit: int = 50) -> pd.DataFrame:
+    """Get reviews filtered by publish_status."""
+    conn = get_connection()
+    query = """
+        SELECT n.id, n.translated_title, n.original_title, n.original_content,
+               n.importance_score, n.industry_category, n.source, n.summary,
+               n.published_at, n.original_url,
+               er.expert_comment, er.ai_final_review, er.opinion_conflict,
+               er.review_completed_at, er.publish_status, er.admin_note,
+               er.publish_status_updated_at
+        FROM news n
+        JOIN expert_reviews er ON n.id = er.news_id
+        WHERE er.expert_comment IS NOT NULL
+          AND er.publish_status = ?
+        ORDER BY er.review_completed_at DESC
+        LIMIT ?
+    """
+    df = pd.read_sql_query(query, conn, params=[status, limit])
+    conn.close()
+    return df
+
+
+def update_publish_status(news_id: int, new_status: str, admin_note: str = None) -> bool:
+    """Update publish_status for a single review."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        now = datetime.now()
+        cursor.execute("""
+            UPDATE expert_reviews SET
+                publish_status = ?,
+                admin_note = ?,
+                publish_status_updated_at = ?,
+                updated_at = ?
+            WHERE news_id = ?
+        """, (new_status, admin_note, now, now, news_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        st.error(f"상태 변경 실패: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def bulk_update_publish_status(news_ids: list, new_status: str) -> int:
+    """Bulk update publish_status for multiple reviews."""
+    if not news_ids:
+        return 0
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        now = datetime.now()
+        placeholders = ','.join(['?'] * len(news_ids))
+        cursor.execute(f"""
+            UPDATE expert_reviews SET
+                publish_status = ?,
+                publish_status_updated_at = ?,
+                updated_at = ?
+            WHERE news_id IN ({placeholders})
+        """, [new_status, now, now] + list(news_ids))
+        conn.commit()
+        return cursor.rowcount
+    except Exception as e:
+        st.error(f"일괄 상태 변경 실패: {e}")
+        return 0
     finally:
         conn.close()
 
@@ -325,6 +399,21 @@ def get_statistics() -> dict:
     """)
     avg = cursor.fetchone()[0]
     stats['queued_avg_importance'] = round(avg, 2) if avg else 0
+
+    # Publish status stats
+    try:
+        cursor.execute("SELECT COUNT(*) FROM expert_reviews WHERE publish_status = 'draft' AND expert_comment IS NOT NULL")
+        stats['pending_approval'] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM expert_reviews WHERE publish_status = 'published'")
+        stats['published_reviews'] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM expert_reviews WHERE publish_status = 'rejected'")
+        stats['rejected_reviews'] = cursor.fetchone()[0]
+    except:
+        stats['pending_approval'] = 0
+        stats['published_reviews'] = 0
+        stats['rejected_reviews'] = 0
 
     # Unread notifications
     try:
@@ -659,6 +748,36 @@ def render_stat_cards(stats):
         </div>
         """, unsafe_allow_html=True)
 
+    # Second row: approval stats
+    col7, col8, col9, _, _, _ = st.columns(6)
+
+    with col7:
+        pending_count = stats.get('pending_approval', 0)
+        st.markdown(f"""
+        <div class="stat-card" style="background: linear-gradient(135deg, #e65100 0%, #bf360c 100%);">
+            <p class="stat-number">{pending_count}</p>
+            <p class="stat-label">승인대기</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col8:
+        published_count = stats.get('published_reviews', 0)
+        st.markdown(f"""
+        <div class="stat-card" style="background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);">
+            <p class="stat-number">{published_count}</p>
+            <p class="stat-label">게시됨</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col9:
+        rejected_count = stats.get('rejected_reviews', 0)
+        st.markdown(f"""
+        <div class="stat-card" style="background: linear-gradient(135deg, #c62828 0%, #b71c1c 100%);">
+            <p class="stat-number">{rejected_count}</p>
+            <p class="stat-label">반려됨</p>
+        </div>
+        """, unsafe_allow_html=True)
+
 
 def render_today_overview(stats):
     """Render today's selected news overview panel."""
@@ -782,10 +901,10 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # 로그인 체크
-    if "login" not in st.session_state or not st.session_state["login"]:
-        login_page()
-        st.stop()
+    # 로그인 체크 비활성화 — 바로 대시보드 진입
+    # if "login" not in st.session_state or not st.session_state["login"]:
+    #     login_page()
+    #     st.stop()
 
     # Apply custom CSS
     apply_custom_css()
@@ -861,9 +980,11 @@ def main():
     unread_count = stats['unread_notifications']
     notification_label = f"🔔 알림 ({unread_count})" if unread_count > 0 else "🔔 알림"
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    pending_label = f"✅ 리뷰 승인 ({stats.get('pending_approval', 0)})" if stats.get('pending_approval', 0) > 0 else "✅ 리뷰 승인"
+
+    tab1, tab2, tab3, tab4, tab_approve, tab5, tab6, tab7, tab8 = st.tabs([
         "🔥 AI 추천 뉴스", "⭐ 북마크", "📂 Markdown 리뷰",
-        "📝 리뷰 완료", notification_label, "📥 리포트 내보내기",
+        "📝 리뷰 완료", pending_label, notification_label, "📥 리포트 내보내기",
         "📊 카테고리 분석", "📡 소스 분석"
     ])
 
@@ -913,6 +1034,15 @@ def main():
                         status_badges.append("✅ 리뷰완료")
                     if has_conflict:
                         status_badges.append("⚠️ 의견충돌")
+
+                    # Publish status badge
+                    pub_status = row.get('publish_status', '')
+                    if pub_status == 'published':
+                        status_badges.append("📢게시됨")
+                    elif pub_status == 'draft' and has_review:
+                        status_badges.append("⏳승인대기")
+                    elif pub_status == 'rejected':
+                        status_badges.append("❌반려")
 
                     status_text = " | ".join(status_badges) if status_badges else "📝 리뷰대기"
 
@@ -1291,7 +1421,7 @@ def main():
             SELECT n.id, n.translated_title, n.original_title, n.importance_score,
                    n.industry_category, n.source,
                    er.expert_comment, er.ai_final_review, er.opinion_conflict,
-                   er.review_completed_at
+                   er.review_completed_at, er.publish_status
             FROM news n
             JOIN expert_reviews er ON n.id = er.news_id
             WHERE er.expert_comment IS NOT NULL
@@ -1307,7 +1437,20 @@ def main():
                 title = row['translated_title'] or row['original_title']
                 conflict_icon = "⚠️" if row.get('opinion_conflict') else "✅"
 
-                with st.expander(f"{conflict_icon} {title}", expanded=False):
+                # Publish status icon
+                pub_st = row.get('publish_status', '')
+                if pub_st == 'published':
+                    pub_icon = "📢"
+                elif pub_st == 'draft':
+                    pub_icon = "⏳"
+                elif pub_st == 'rejected':
+                    pub_icon = "❌"
+                elif pub_st == 'approved':
+                    pub_icon = "✅"
+                else:
+                    pub_icon = ""
+
+                with st.expander(f"{conflict_icon} {pub_icon} {title}", expanded=False):
                     col1, col2 = st.columns(2)
 
                     with col1:
@@ -1318,7 +1461,161 @@ def main():
                         st.markdown("**AI 최종 리뷰**")
                         st.write(row.get('ai_final_review', '아직 생성되지 않음'))
 
-                    st.caption(f"리뷰 시간: {row.get('review_completed_at', '-')}")
+                    st.caption(f"리뷰 시간: {row.get('review_completed_at', '-')} | 게시상태: {pub_st or '-'}")
+
+    with tab_approve:
+        st.subheader("✅ 리뷰 승인 관리")
+
+        # Status filter
+        status_options = {
+            'draft': '⏳ 승인대기 (draft)',
+            'approved': '✅ 승인됨 (approved)',
+            'rejected': '❌ 반려됨 (rejected)',
+            'published': '📢 게시됨 (published)',
+        }
+        selected_status = st.selectbox(
+            "상태 필터",
+            list(status_options.keys()),
+            format_func=lambda x: status_options[x],
+            key="approve_status_filter"
+        )
+
+        # Display persistent feedback
+        if st.session_state.get("approve_success_msg"):
+            st.success(st.session_state.pop("approve_success_msg"))
+        if st.session_state.get("approve_error_msg"):
+            st.error(st.session_state.pop("approve_error_msg"))
+
+        # Get reviews by status
+        approve_df = get_reviews_by_status(selected_status, limit=50)
+
+        if approve_df.empty:
+            st.info(f"'{status_options[selected_status]}' 상태의 리뷰가 없습니다.")
+        else:
+            st.caption(f"총 {len(approve_df)}건")
+
+            # Bulk action area
+            if selected_status == 'draft':
+                st.markdown("#### 일괄 처리")
+                bulk_col1, bulk_col2, bulk_col3 = st.columns([0.4, 0.3, 0.3])
+                with bulk_col1:
+                    bulk_ids = st.multiselect(
+                        "일괄 처리할 뉴스 선택",
+                        options=approve_df['id'].tolist(),
+                        format_func=lambda x: f"#{x} - {(approve_df[approve_df['id']==x]['translated_title'].values[0] or approve_df[approve_df['id']==x]['original_title'].values[0] or '')[:40]}",
+                        key="bulk_select"
+                    )
+                with bulk_col2:
+                    if st.button("📢 일괄 승인+게시", key="bulk_publish", disabled=not bulk_ids):
+                        count = bulk_update_publish_status(bulk_ids, 'published')
+                        st.session_state["approve_success_msg"] = f"{count}건 게시 완료"
+                        st.rerun()
+                with bulk_col3:
+                    if st.button("✅ 일괄 승인", key="bulk_approve", disabled=not bulk_ids):
+                        count = bulk_update_publish_status(bulk_ids, 'approved')
+                        st.session_state["approve_success_msg"] = f"{count}건 승인 완료"
+                        st.rerun()
+
+                st.markdown("---")
+
+            # Individual review cards
+            for _, row in approve_df.iterrows():
+                news_id = row['id']
+                title = row['translated_title'] or row['original_title'] or '제목 없음'
+                importance = row.get('importance_score', 0) or 0
+
+                if importance >= 0.8:
+                    imp_badge = "🔴"
+                elif importance >= 0.6:
+                    imp_badge = "🟠"
+                elif importance >= 0.4:
+                    imp_badge = "🟡"
+                else:
+                    imp_badge = "🟢"
+
+                with st.expander(f"{imp_badge} #{news_id} {title}", expanded=False):
+                    # News-review comparison view
+                    col_news, col_review = st.columns(2)
+
+                    with col_news:
+                        st.markdown("**📰 뉴스 원문**")
+                        st.markdown(f"**제목:** {title}")
+                        st.caption(f"출처: {row.get('source', '-')} | 산업: {row.get('industry_category', '-')} | 중요도: {importance:.2f}")
+
+                        if row.get('summary'):
+                            st.markdown("**요약:**")
+                            st.write(row['summary'])
+
+                        if row.get('original_content'):
+                            content_preview = str(row['original_content'])[:500]
+                            st.markdown("**원문 내용 (미리보기):**")
+                            st.text(content_preview + ("..." if len(str(row['original_content'])) > 500 else ""))
+
+                        if row.get('original_url'):
+                            st.markdown(f"[원문 링크]({row['original_url']})")
+
+                    with col_review:
+                        st.markdown("**📝 전문가 리뷰**")
+                        st.markdown(row.get('expert_comment', '리뷰 없음'))
+
+                        if row.get('ai_final_review'):
+                            st.markdown("---")
+                            st.markdown("**🤖 AI 최종 리뷰**")
+                            st.write(row['ai_final_review'])
+
+                        if row.get('admin_note'):
+                            st.markdown("---")
+                            st.warning(f"**관리자 메모:** {row['admin_note']}")
+
+                        st.caption(f"리뷰 완료: {row.get('review_completed_at', '-')} | 상태 변경: {row.get('publish_status_updated_at', '-')}")
+
+                    # Action buttons
+                    st.markdown("---")
+                    action_cols = st.columns(5)
+
+                    if selected_status == 'draft':
+                        with action_cols[0]:
+                            if st.button("📢 승인+게시", key=f"ap_publish_{news_id}", type="primary"):
+                                if update_publish_status(news_id, 'published'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} 게시 완료"
+                                    st.rerun()
+                        with action_cols[1]:
+                            if st.button("✅ 승인만", key=f"ap_approve_{news_id}"):
+                                if update_publish_status(news_id, 'approved'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} 승인 완료"
+                                    st.rerun()
+                        with action_cols[2]:
+                            reject_note = st.text_input("반려 사유", key=f"ap_reject_note_{news_id}", placeholder="사유 입력")
+                            if st.button("❌ 반려", key=f"ap_reject_{news_id}"):
+                                if update_publish_status(news_id, 'rejected', reject_note):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} 반려 완료"
+                                    st.rerun()
+
+                    elif selected_status == 'approved':
+                        with action_cols[0]:
+                            if st.button("📢 게시", key=f"ap_publish_{news_id}", type="primary"):
+                                if update_publish_status(news_id, 'published'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} 게시 완료"
+                                    st.rerun()
+                        with action_cols[1]:
+                            if st.button("↩ draft로 되돌리기", key=f"ap_todraft_{news_id}"):
+                                if update_publish_status(news_id, 'draft'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} draft로 되돌림"
+                                    st.rerun()
+
+                    elif selected_status == 'published':
+                        with action_cols[0]:
+                            if st.button("⏸ 게시 취소", key=f"ap_unpublish_{news_id}"):
+                                if update_publish_status(news_id, 'draft'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} 게시 취소됨"
+                                    st.rerun()
+
+                    elif selected_status == 'rejected':
+                        with action_cols[0]:
+                            if st.button("↩ draft로 되돌리기", key=f"ap_todraft_{news_id}"):
+                                if update_publish_status(news_id, 'draft'):
+                                    st.session_state["approve_success_msg"] = f"#{news_id} draft로 되돌림 (수정 후 재제출)"
+                                    st.rerun()
 
     with tab5:
         st.subheader("🔔 알림")

@@ -66,6 +66,9 @@ def init_db():
             opinion_conflict BOOLEAN DEFAULT FALSE,
             expert_opinion_priority TEXT,
             ai_opinion_reference TEXT,
+            publish_status TEXT DEFAULT 'draft',
+            admin_note TEXT,
+            publish_status_updated_at DATETIME,
             review_started_at DATETIME,
             review_completed_at DATETIME,
             review_duration_seconds INTEGER,
@@ -116,6 +119,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_collected ON news(collected_at DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_news ON expert_reviews(news_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_completed ON expert_reviews(review_completed_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_publish_status ON expert_reviews(publish_status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_content_score ON news(content_score DESC)")
 
     conn.commit()
@@ -206,7 +210,26 @@ def migrate_db():
                ('notify_on_opinion_conflict', 'true')
     """)
 
+    # Publish status columns for expert_reviews
+    cursor.execute("PRAGMA table_info(expert_reviews)")
+    er_columns = [col[1] for col in cursor.fetchall()]
+
+    if 'publish_status' not in er_columns:
+        cursor.execute("ALTER TABLE expert_reviews ADD COLUMN publish_status TEXT DEFAULT 'draft'")
+        # Backfill existing reviews as 'published' for backward compatibility
+        cursor.execute("UPDATE expert_reviews SET publish_status = 'published' WHERE publish_status IS NULL OR publish_status = 'draft'")
+        print("Added publish_status column to expert_reviews table (existing rows backfilled as 'published')")
+
+    if 'admin_note' not in er_columns:
+        cursor.execute("ALTER TABLE expert_reviews ADD COLUMN admin_note TEXT")
+        print("Added admin_note column to expert_reviews table")
+
+    if 'publish_status_updated_at' not in er_columns:
+        cursor.execute("ALTER TABLE expert_reviews ADD COLUMN publish_status_updated_at DATETIME")
+        print("Added publish_status_updated_at column to expert_reviews table")
+
     # Create indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_reviews_publish_status ON expert_reviews(publish_status)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_bookmarked ON news(is_bookmarked)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC)")

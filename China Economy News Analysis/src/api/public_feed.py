@@ -58,6 +58,7 @@ def get_published_news(limit: int = 10, offset: int = 0) -> list[dict]:
         FROM news n
         INNER JOIN expert_reviews er ON n.id = er.news_id
         WHERE er.expert_comment IS NOT NULL
+          AND er.publish_status = 'published'
         ORDER BY n.published_at DESC
         LIMIT ? OFFSET ?
     """
@@ -83,6 +84,7 @@ def get_published_news_count() -> int:
         FROM news n
         INNER JOIN expert_reviews er ON n.id = er.news_id
         WHERE er.expert_comment IS NOT NULL
+          AND er.publish_status = 'published'
     """
 
     cursor.execute(query)
@@ -121,6 +123,7 @@ def get_news_by_id(news_id: int) -> Optional[dict]:
         FROM news n
         INNER JOIN expert_reviews er ON n.id = er.news_id
         WHERE n.id = ? AND er.expert_comment IS NOT NULL
+          AND er.publish_status = 'published'
     """
 
     cursor.execute(query, (news_id,))
@@ -157,6 +160,7 @@ def get_published_news_by_date(target_date: date, limit: int = 50) -> list[dict]
         FROM news n
         INNER JOIN expert_reviews er ON n.id = er.news_id
         WHERE er.expert_comment IS NOT NULL
+          AND er.publish_status = 'published'
           AND DATE(n.published_at) = ?
         ORDER BY n.importance_score DESC, n.published_at DESC
         LIMIT ?
@@ -183,6 +187,7 @@ def get_available_dates() -> list[str]:
         FROM news n
         INNER JOIN expert_reviews er ON n.id = er.news_id
         WHERE er.expert_comment IS NOT NULL
+          AND er.publish_status = 'published'
         ORDER BY news_date DESC
     """
 
