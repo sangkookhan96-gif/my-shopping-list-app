@@ -114,6 +114,27 @@
     }
 
     /**
+     * Initialize intro card (show once for first visit, then hide)
+     */
+    function initIntroCard() {
+        var STORAGE_KEY = 'intro_card_dismissed';
+        var card = document.getElementById('introCard');
+        var closeBtn = document.getElementById('introCardClose');
+
+        if (!card) return;
+
+        if (localStorage.getItem(STORAGE_KEY)) {
+            card.classList.add('hidden');
+            return;
+        }
+
+        closeBtn.addEventListener('click', function() {
+            card.classList.add('hidden');
+            localStorage.setItem(STORAGE_KEY, '1');
+        });
+    }
+
+    /**
      * Initialize on DOM ready
      */
     function init() {
@@ -121,6 +142,7 @@
         initCollapseButtons();
         initSmoothScroll();
         initKeyboardNav();
+        initIntroCard();
     }
 
     // Run on DOM ready

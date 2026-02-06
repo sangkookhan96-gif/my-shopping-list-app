@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Main entry point for news collection and analysis."""
 
-#!/usr/bin/env python3
-"""Main entry point for news collection and analysis."""
-
 import argparse
 import sys
 from pathlib import Path
@@ -40,6 +37,11 @@ def main():
         crawler = NewsCrawler()
         results = crawler.crawl_all()
         print(f"\n수집 완료: 총 {results['total']}개, 신규 {results['new']}개")
+
+        # Enrich: fetch full article content for items with empty content
+        print("\n원문 본문 수집 중...")
+        enriched = crawler.enrich_news_content(limit=50)
+        print(f"✓ {enriched}건 원문 수집 완료")
 
         conn = get_connection()
         cursor = conn.cursor()
@@ -98,6 +100,34 @@ def main():
 
                 print(f"\n✓ {len(selected_ids)}개 뉴스 선정 완료")
 
+        conn.close()
+
+    # 무료 번역: 선정된 뉴스 제목을 Google Translate로 한국어 번역
+    if selected_ids:
+        print("\n제목 번역 시작 (Google Translate)")
+        from src.utils.translator import translate_zh_to_ko
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        for news_id in selected_ids:
+            cursor.execute(
+                "SELECT original_title, translated_title FROM news WHERE id=?",
+                (news_id,)
+            )
+            row = cursor.fetchone()
+            if row and not row['translated_title']:
+                ko_title = translate_zh_to_ko(row['original_title'])
+                if ko_title:
+                    cursor.execute(
+                        "UPDATE news SET translated_title=? WHERE id=?",
+                        (ko_title, news_id)
+                    )
+                    print(f"✓ 번역: {ko_title[:50]}...")
+                else:
+                    print(f"✗ 번역 실패: {row['original_title'][:40]}")
+
+        conn.commit()
         conn.close()
 
     if args.analyze and selected_ids:

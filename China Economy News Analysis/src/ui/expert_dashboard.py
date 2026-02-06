@@ -154,11 +154,17 @@ def get_news_detail(news_id: int) -> dict:
 
 
 def save_expert_comment(news_id: int, comment: str) -> bool:
-    """Save expert comment and trigger AI final review."""
+    """Save expert comment. Auto-publish only if original_content exists."""
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
+        # Check if news has original content
+        cursor.execute("SELECT original_content FROM news WHERE id = ?", (news_id,))
+        news_row = cursor.fetchone()
+        has_content = bool(news_row and news_row['original_content'] and news_row['original_content'].strip())
+        status = 'published' if has_content else 'draft'
+
         # Check if review exists
         cursor.execute("SELECT id FROM expert_reviews WHERE news_id = ?", (news_id,))
         existing = cursor.fetchone()
@@ -170,23 +176,73 @@ def save_expert_comment(news_id: int, comment: str) -> bool:
                 UPDATE expert_reviews SET
                     expert_comment = ?,
                     review_completed_at = ?,
-                    publish_status = 'draft',
+                    publish_status = ?,
                     publish_status_updated_at = ?,
                     updated_at = ?
                 WHERE news_id = ?
-            """, (comment, now, now, now, news_id))
+            """, (comment, now, status, now, now, news_id))
         else:
             cursor.execute("""
                 INSERT INTO expert_reviews
                 (news_id, expert_comment, review_started_at, review_completed_at,
                  publish_status, publish_status_updated_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
-            """, (news_id, comment, now, now, now, now, now))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (news_id, comment, now, now, status, now, now, now))
 
         conn.commit()
         return True
     except Exception as e:
         st.error(f"저장 실패: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def has_original_content(news_id: int) -> bool:
+    """Check if news has non-empty original_content."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT original_content FROM news WHERE id = ?", (news_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row and row['original_content'] and row['original_content'].strip())
+
+
+def skip_news(news_id: int) -> bool:
+    """Mark news as skipped (비공개). Removes from queued list, not published."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE news SET
+                expert_review_status = 'skipped',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (news_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        st.error(f"비공개 처리 실패: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def restore_skipped_news(news_id: int) -> bool:
+    """Restore skipped news back to queued_today."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE news SET
+                expert_review_status = 'queued_today',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND expert_review_status = 'skipped'
+        """, (news_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception as e:
+        st.error(f"복원 실패: {e}")
         return False
     finally:
         conn.close()
@@ -410,10 +466,14 @@ def get_statistics() -> dict:
 
         cursor.execute("SELECT COUNT(*) FROM expert_reviews WHERE publish_status = 'rejected'")
         stats['rejected_reviews'] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM news WHERE expert_review_status = 'skipped'")
+        stats['skipped_news'] = cursor.fetchone()[0]
     except:
         stats['pending_approval'] = 0
         stats['published_reviews'] = 0
         stats['rejected_reviews'] = 0
+        stats['skipped_news'] = 0
 
     # Unread notifications
     try:
@@ -1051,7 +1111,7 @@ def main():
                     is_bookmarked = row.get('is_bookmarked') or False
                     bookmark_icon = "⭐" if is_bookmarked else "☆"
 
-                    col1, col2, col3, col4, col5 = st.columns([0.45, 0.18, 0.17, 0.1, 0.1])
+                    col1, col2, col3, col4, col5, col6 = st.columns([0.40, 0.16, 0.15, 0.09, 0.09, 0.11])
 
                     with col1:
                         if has_review:
@@ -1067,6 +1127,12 @@ def main():
                             toggle_bookmark(news_id)
                             st.rerun()
                     with col5:
+                        if not has_review:
+                            if st.button("🚫", key=f"skip_{news_id}", help="비공개 (리뷰 불필요)"):
+                                if skip_news(news_id):
+                                    st.session_state["save_success_msg"] = f"비공개 처리 완료: {(title or '')[:30]}..."
+                                    st.rerun()
+                    with col6:
                         with st.popover("📝", help="빠른 리뷰"):
                             st.markdown(f"**{(title or '')[:40]}...**")
                             stance = st.radio(
@@ -1092,7 +1158,10 @@ def main():
                                             news=dict(row) if row is not None else None,
                                             auto_commit=True,
                                         )
-                                        st.session_state["save_success_msg"] = f"빠른 리뷰 저장 완료 (리뷰 완료 탭에서 확인)"
+                                        if has_original_content(news_id):
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 및 공개 완료 (리뷰 완료 탭에서 확인)"
+                                        else:
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 완료 (⚠️ 원문 없음 - 비공개 상태)"
                                     else:
                                         st.session_state["save_error_msg"] = f"DB 저장 실패 (뉴스 {news_id})"
                                 except Exception as e:
@@ -1258,7 +1327,10 @@ def main():
 
                                         news_title = (row.get('translated_title') or row.get('original_title') or '')[:30]
                                         git_msg = " + Git 커밋" if result.get("committed") else ""
-                                        st.session_state["save_success_msg"] = f"저장 완료{git_msg}: {news_title}... (리뷰 완료 탭에서 확인)"
+                                        if has_original_content(news_id):
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 및 공개 완료{git_msg}: {news_title}... (리뷰 완료 탭에서 확인)"
+                                        else:
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 완료 (⚠️ 원문 없음 - 비공개 상태){git_msg}: {news_title}..."
                                     except Exception as e:
                                         st.session_state["save_error_msg"] = f"저장 중 오류: {e}"
 
@@ -1291,7 +1363,10 @@ def main():
                                                 auto_commit=False
                                             )
 
-                                        st.session_state["save_success_msg"] = f"파일 저장 완료: {result.get('file_path', '')} (리뷰 완료 탭에서 확인)"
+                                        if has_original_content(news_id):
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 및 공개 완료: {result.get('file_path', '')} (리뷰 완료 탭에서 확인)"
+                                        else:
+                                            st.session_state["save_success_msg"] = f"리뷰 저장 완료 (⚠️ 원문 없음 - 비공개 상태): {result.get('file_path', '')}"
                                     except Exception as e:
                                         st.session_state["save_error_msg"] = f"저장 중 오류: {e}"
 
@@ -1468,10 +1543,11 @@ def main():
 
         # Status filter
         status_options = {
-            'draft': '⏳ 승인대기 (draft)',
-            'approved': '✅ 승인됨 (approved)',
-            'rejected': '❌ 반려됨 (rejected)',
             'published': '📢 게시됨 (published)',
+            'draft': '⏳ 승인대기 (draft)',
+            'rejected': '❌ 반려됨 (rejected)',
+            'approved': '✅ 승인됨 (approved)',
+            'skipped': '🚫 비공개 뉴스 (skipped)',
         }
         selected_status = st.selectbox(
             "상태 필터",
@@ -1486,8 +1562,20 @@ def main():
         if st.session_state.get("approve_error_msg"):
             st.error(st.session_state.pop("approve_error_msg"))
 
-        # Get reviews by status
-        approve_df = get_reviews_by_status(selected_status, limit=50)
+        # Skipped news: separate query (no expert_reviews join needed)
+        if selected_status == 'skipped':
+            conn_skip = get_connection()
+            approve_df = pd.read_sql_query("""
+                SELECT id, translated_title, original_title, importance_score,
+                       industry_category, source, summary, published_at
+                FROM news
+                WHERE expert_review_status = 'skipped'
+                ORDER BY updated_at DESC
+                LIMIT 50
+            """, conn_skip)
+            conn_skip.close()
+        else:
+            approve_df = get_reviews_by_status(selected_status, limit=50)
 
         if approve_df.empty:
             st.info(f"'{status_options[selected_status]}' 상태의 리뷰가 없습니다.")
@@ -1518,8 +1606,26 @@ def main():
 
                 st.markdown("---")
 
-            # Individual review cards
-            for _, row in approve_df.iterrows():
+            # Skipped news: simple list with restore button
+            if selected_status == 'skipped':
+                for _, row in approve_df.iterrows():
+                    news_id = row['id']
+                    title = row['translated_title'] or row['original_title'] or '제목 없음'
+                    importance = row.get('importance_score', 0) or 0
+                    sk_col1, sk_col2 = st.columns([0.8, 0.2])
+                    with sk_col1:
+                        st.write(f"**#{news_id}** {title}")
+                        st.caption(f"출처: {row.get('source', '-')} | 산업: {row.get('industry_category', '-')} | 중요도: {importance:.2f}")
+                    with sk_col2:
+                        if st.button("↩ 선정으로 복원", key=f"restore_{news_id}"):
+                            if restore_skipped_news(news_id):
+                                st.session_state["approve_success_msg"] = f"#{news_id} 선정 목록으로 복원됨"
+                                st.rerun()
+                    st.markdown("---")
+
+            # Individual review cards (for non-skipped statuses)
+            if selected_status != 'skipped':
+              for _, row in approve_df.iterrows():
                 news_id = row['id']
                 title = row['translated_title'] or row['original_title'] or '제목 없음'
                 importance = row.get('importance_score', 0) or 0

@@ -232,8 +232,12 @@ def filter_news(news_list: list) -> list:
 
     for news in news_list:
         title = news.get('original_title', '')
-        content = news.get('original_content', '')
+        content = news.get('original_content', '') or ''
         source = news.get('source', '')
+
+        # 원문 본문이 없는 뉴스는 사용자에게 전달 불가 → 선정 제외
+        if not content.strip():
+            continue
 
         if not is_factual_news(title, content, source):
             continue
