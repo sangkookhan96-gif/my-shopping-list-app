@@ -1,12 +1,185 @@
-"""뉴스 선정 및 필터링 모듈 - 출처 다양성 + 품질 기반 선정 + 내용적 점수"""
+"""뉴스 선정 및 필터링 모듈 - 출처 다양성 + 품질 기반 선정 + 내용적 점수 + 중복 제거"""
 
 import logging
 import re
 from collections import defaultdict
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.collector.content_scorer import ContentScorer
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 제목 유사도 기반 중복 제거
+# ============================================================
+
+# 중복 판정에서 무시할 일반 단어 (stopwords)
+TITLE_STOPWORDS = {
+    '的', '了', '在', '是', '与', '和', '或', '等', '将', '被', '对', '为',
+    '已', '正', '可', '也', '都', '又', '再', '更', '最', '这', '那', '有',
+    '中', '上', '下', '内', '外', '前', '后', '新', '大', '小', '多', '少',
+    '今日', '今天', '昨日', '昨天', '本周', '本月', '今年', '去年',
+    '据悉', '据称', '据报道', '消息', '快讯', '速递', '盘中必读',
+    '推出', '发布', '宣布', '公布', '表示', '称', '显示', '报告',
+}
+
+# 핵심 주제어 (높은 가중치 부여)
+CORE_TOPIC_KEYWORDS = [
+    # 기관/거래소
+    '沪深', '交易所', '北交所', '上交所', '深交所', '证监会', '央行',
+    '发改委', '工信部', '财政部', '商务部', '国资委',
+    # 금융 용어
+    'IPO', '再融资', '并购', '重组', '增发', '配股', '减持', '增持',
+    '融资', '债券', '股票', '基金', 'ETF',
+    # 산업
+    'AI', '人工智能', '芯片', '半导体', '新能源', '光伏', '电池',
+    '汽车', '航天', '航空', '机器人', '量子', '5G', '6G',
+    # 기업명 패턴
+    '特斯拉', '华为', '腾讯', '阿里', '百度', '比亚迪', '宁德时代',
+]
+
+# 중복 판정 임계값 (0.0 ~ 1.0, 높을수록 엄격)
+SIMILARITY_THRESHOLD = 0.4  # 낮춰서 더 많은 중복 감지
+
+
+def extract_title_keywords(title: str) -> set:
+    """제목에서 핵심 키워드 추출 (중복 판정용).
+
+    - 핵심 주제어 우선 추출
+    - 숫자+단위 패턴 보존 (예: 900亿, 77股, 4100点)
+    - 2글자 키워드만 추출 (간결하게)
+    """
+    if not title:
+        return set()
+
+    words = set()
+
+    # 1. 핵심 주제어 추출 (가장 중요)
+    for keyword in CORE_TOPIC_KEYWORDS:
+        if keyword in title:
+            words.add(keyword)
+
+    # 2. 영문 단어 추출 (대문자 변환)
+    english_words = re.findall(r'[A-Za-z]{2,}', title)
+    words.update(w.upper() for w in english_words)
+
+    # 3. 숫자+단위 패턴 추출 (중요한 식별자)
+    num_patterns = re.findall(r'\d+(?:\.\d+)?[亿万兆元%股点个家条项]?', title)
+    words.update(p for p in num_patterns if len(p) >= 2)
+
+    # 4. 중국어 2글자 키워드 추출 (핵심만)
+    chinese_text = re.sub(r'[^\u4e00-\u9fff]', '', title)
+    for i in range(len(chinese_text) - 1):
+        word = chinese_text[i:i+2]
+        if word not in TITLE_STOPWORDS:
+            words.add(word)
+
+    # stopwords 제거
+    words = {w for w in words if w not in TITLE_STOPWORDS and len(w) >= 2}
+
+    return words
+
+
+def calculate_title_similarity(title1: str, title2: str) -> float:
+    """두 제목 간 유사도 계산 (가중 Jaccard similarity).
+
+    핵심 주제어 일치 시 가중치 부여.
+
+    Returns:
+        0.0 ~ 1.0 (1.0 = 완전 동일)
+    """
+    keywords1 = extract_title_keywords(title1)
+    keywords2 = extract_title_keywords(title2)
+
+    if not keywords1 or not keywords2:
+        return 0.0
+
+    intersection = keywords1 & keywords2
+    union = keywords1 | keywords2
+
+    if not union:
+        return 0.0
+
+    # 기본 Jaccard 유사도
+    base_sim = len(intersection) / len(union)
+
+    # 핵심 주제어 일치 보너스
+    core_matches = sum(1 for kw in intersection if kw in CORE_TOPIC_KEYWORDS or len(kw) >= 3)
+    if core_matches >= 2:
+        # 핵심 주제어 2개 이상 일치 시 유사도 증가
+        base_sim = min(base_sim * 1.5, 1.0)
+    elif core_matches >= 1:
+        base_sim = min(base_sim * 1.2, 1.0)
+
+    return base_sim
+
+
+def is_duplicate_title(title: str, existing_titles: list, threshold: float = SIMILARITY_THRESHOLD) -> tuple:
+    """기존 제목들과 중복 여부 판정.
+
+    Args:
+        title: 검사할 제목
+        existing_titles: 기존 제목 리스트
+        threshold: 유사도 임계값
+
+    Returns:
+        (is_duplicate, matched_title, similarity)
+    """
+    for existing in existing_titles:
+        similarity = calculate_title_similarity(title, existing)
+        if similarity >= threshold:
+            return (True, existing, similarity)
+    return (False, None, 0.0)
+
+
+def load_processed_titles() -> list:
+    """DB에서 처리된 뉴스 제목 로드 (스킵/폐기/리뷰완료).
+
+    Returns:
+        중복 제거 대상 제목 리스트
+    """
+    try:
+        from src.database.models import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # 1. 스킵된 뉴스 제목
+        cursor.execute("""
+            SELECT original_title FROM news
+            WHERE expert_review_status = 'skipped'
+        """)
+        skipped = [row['original_title'] for row in cursor.fetchall()]
+
+        # 2. 폐기된 뉴스 제목 (expert_reviews.publish_status = 'discarded')
+        cursor.execute("""
+            SELECT n.original_title FROM news n
+            JOIN expert_reviews er ON n.id = er.news_id
+            WHERE er.publish_status IN ('discarded', 'rejected')
+        """)
+        discarded = [row['original_title'] for row in cursor.fetchall()]
+
+        # 3. 리뷰 완료된 뉴스 제목 (published, draft 포함)
+        cursor.execute("""
+            SELECT n.original_title FROM news n
+            JOIN expert_reviews er ON n.id = er.news_id
+            WHERE er.publish_status IN ('published', 'draft')
+        """)
+        reviewed = [row['original_title'] for row in cursor.fetchall()]
+
+        conn.close()
+
+        all_titles = skipped + discarded + reviewed
+        logger.info(f"중복 제거 대상 로드: 스킵 {len(skipped)}, 폐기 {len(discarded)}, 리뷰완료 {len(reviewed)}")
+
+        return all_titles
+
+    except Exception as e:
+        logger.error(f"처리된 제목 로드 실패: {e}")
+        return []
 
 # 내용적 점수 평가기 (모듈 레벨 싱글턴)
 _content_scorer = ContentScorer()
@@ -226,9 +399,23 @@ def categorize_news(title: str, content: str) -> str:
     return max(scores.items(), key=lambda x: x[1])[0] if scores else '기타'
 
 
-def filter_news(news_list: list) -> list:
-    """뉴스 필터링"""
+def filter_news(news_list: list, enable_dedup: bool = True) -> list:
+    """뉴스 필터링 (중복 제거 포함).
+
+    Args:
+        news_list: 필터링할 뉴스 리스트
+        enable_dedup: 중복 제거 활성화 여부 (기본: True)
+    """
     filtered = []
+
+    # 중복 제거를 위한 기존 제목 로드
+    if enable_dedup:
+        processed_titles = load_processed_titles()
+        batch_titles = []  # 현재 배치 내 선정된 제목 (배치 내 중복 방지)
+        dedup_count = 0
+    else:
+        processed_titles = []
+        batch_titles = []
 
     for news in news_list:
         title = news.get('original_title', '')
@@ -247,6 +434,25 @@ def filter_news(news_list: list) -> list:
         # 단신 뉴스 제외
         if is_brief_news(title, content):
             continue
+
+        # === 중복 제거 ===
+        if enable_dedup:
+            # 1. 기존 처리된 뉴스와 중복 체크 (스킵/폐기/리뷰완료)
+            is_dup, matched, sim = is_duplicate_title(title, processed_titles)
+            if is_dup:
+                logger.info(f"중복 제외 (기존): [{news.get('id')}] {title[:30]}... ↔ {matched[:30]}... ({sim:.2f})")
+                dedup_count += 1
+                continue
+
+            # 2. 현재 배치 내 중복 체크
+            is_dup, matched, sim = is_duplicate_title(title, batch_titles)
+            if is_dup:
+                logger.info(f"중복 제외 (배치): [{news.get('id')}] {title[:30]}... ↔ {matched[:30]}... ({sim:.2f})")
+                dedup_count += 1
+                continue
+
+            # 배치에 현재 제목 추가
+            batch_titles.append(title)
 
         news['category'] = categorize_news(title, content)
         news['is_domestic'] = is_domestic_news(title, content)
@@ -287,6 +493,9 @@ def filter_news(news_list: list) -> list:
         news['priority_score'] = formal_normalized * 0.40 + content_result['total_score'] * 0.60
 
         filtered.append(news)
+
+    if enable_dedup and dedup_count > 0:
+        logger.info(f"중복 제거 완료: {dedup_count}건 제외, {len(filtered)}건 통과")
 
     return filtered
 
